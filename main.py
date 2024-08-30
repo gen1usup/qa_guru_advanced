@@ -1,58 +1,50 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
 import json
-import os
-from datetime import datetime
+from http import HTTPStatus
+
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+
+from models.AppStatus import AppStatus
+from models.User import User
+from fastapi_pagination import Page, add_pagination, paginate
 
 app = FastAPI()
+add_pagination(app)
 
-USERS_FILE = 'users.json'
+users: list[User] = []
 
-# Структура данных пользователя
-class User(BaseModel):
-    name: str
-    phone: str
+@app.get("/")
+def root():
+    return {"message": "Welcome to QA.GURU Python Advanced!"}
 
-class UserInDB(User):
-    id: int
-    date_added: str
 
-# Функция для чтения данных пользователей из файла
-def read_users():
-    if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, 'r') as file:
-        return json.load(file)
+@app.get("/status", status_code=HTTPStatus.OK)
+def status() -> AppStatus:
+    return AppStatus(users=bool(users))
 
-# Функция для записи данных пользователей в файл
-def write_users(users):
-    with open(USERS_FILE, 'w') as file:
-        json.dump(users, file, indent=4)
 
-# GET метод для получения информации о пользователе по ID
-@app.get("/user/{user_id}")
-async def get_user(user_id: int):
-    users = read_users()
-    user = next((user for user in users if user["id"] == user_id), None)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+@app.get("/api/users/{user_id}", status_code=HTTPStatus.OK)
+def get_user(user_id: int) -> User:
+    if user_id < 1:
+        raise HTTPException(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail="Invalid user id")
+    if user_id > len(users):
+        raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail="User not found")
+    return users[user_id - 1]
 
-# POST метод для добавления нового пользователя
-@app.post("/user", response_model=UserInDB)
-async def create_user(user: User):
-    users = read_users()
-    if users:
-        new_id = max(user["id"] for user in users) + 1
-    else:
-        new_id = 1
-    new_user = UserInDB(
-        id=new_id,
-        name=user.name,
-        phone=user.phone,
-        date_added=datetime.now().isoformat()
-    )
-    users.append(new_user.dict())
-    write_users(users)
-    return new_user
+
+@app.get("/api/users/", response_model=Page[User], status_code=HTTPStatus.OK)
+def get_users() -> Page[User]:
+    return paginate(users)
+
+
+if __name__ == "__main__":
+    with open("users.json") as f:
+        users = json.load(f)
+
+    for user in users:
+        User.model_validate(user)
+
+    print("Users loaded")
+
+    uvicorn.run(app, host="localhost", port=8002)
